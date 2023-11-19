@@ -13,8 +13,8 @@ declare_id!("WBAVDQ9bRtxDym7G9HvDMSfoYh5i9YR6aiPdHzmSPoa");
 pub mod wba_oracle {
     use super::*;
 
-    pub fn oracle_create(ctx: Context<OracleCreate>) -> Result<()> {
-        ctx.accounts.oracle_create(&ctx.bumps)
+    pub fn oracle_create(ctx: Context<OracleCreate>, name: String) -> Result<()> {
+        ctx.accounts.oracle_create(&ctx.bumps, name)
     }
 
     pub fn oracle_update(ctx: Context<OracleUpdate>, value: u64) -> Result<()> {

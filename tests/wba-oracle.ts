@@ -56,7 +56,7 @@ describe("oracle", () => {
 
   it("oracle create", async () => {
     await program.methods
-      .oracleCreate()
+      .oracleCreate("sol-usd")
       .accounts({
         owner: owner.publicKey,
         oracle,

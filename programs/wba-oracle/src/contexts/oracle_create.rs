@@ -6,6 +6,7 @@ use anchor_lang::prelude::*;
 use std::collections::BTreeMap;
 
 #[derive(Accounts)]
+#[instruction(name: String)]
 pub struct OracleCreate<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
@@ -25,7 +26,7 @@ pub struct OracleCreate<'info> {
 }
 
 impl<'info> OracleCreate<'info> {
-    pub fn oracle_create(&mut self, bumps: &BTreeMap<String, u8>) -> Result<()> {
+    pub fn oracle_create(&mut self, bumps: &BTreeMap<String, u8>, name: String) -> Result<()> {
         // pub owner: Pubkey,
         // pub value: u64,
         // pub created_at: i64,
@@ -34,8 +35,10 @@ impl<'info> OracleCreate<'info> {
         // pub bump: u8,
 
         let oracle = &mut self.oracle;
+        oracle.verified = false;
         oracle.owner = self.owner.key();
         oracle.value = 0.0;
+        oracle.name = name;
         oracle.operators = Vec::new();
         let timestamp = Clock::get()?.unix_timestamp;
         oracle.created_at = timestamp;

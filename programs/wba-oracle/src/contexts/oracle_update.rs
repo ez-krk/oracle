@@ -28,8 +28,6 @@ impl<'info> OracleUpdate<'info> {
 
         let oracle = &mut self.oracle;
 
-        msg!("hello there");
-
         let index = oracle
             .operators
             .iter()
