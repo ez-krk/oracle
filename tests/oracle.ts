@@ -7,7 +7,7 @@ import {
   PublicKey,
   SystemProgram,
 } from "@solana/web3.js";
-import { WbaOracle } from "../target/types/wba_oracle";
+import { Oracle } from "../target/types/oracle";
 import { assert } from "chai";
 
 const commitment: Commitment = "confirmed";
@@ -15,14 +15,16 @@ const commitment: Commitment = "confirmed";
 describe("oracle", () => {
   // Configure the client to use the local cluster.
   anchor.setProvider(anchor.AnchorProvider.env());
-  const program = anchor.workspace.WbaOracle as Program<WbaOracle>;
+  const program = anchor.workspace.Oracle as Program<Oracle>;
   const connection: Connection = anchor.getProvider().connection;
 
   const owner = Keypair.generate();
   const operator1 = Keypair.generate();
   console.log("operator 1 : ", operator1.publicKey.toString());
+  const price1 = new BN(10);
   const operator2 = Keypair.generate();
   console.log("operator 2 : ", operator2.publicKey.toString());
+  const price2 = new BN(20);
 
   const oracle = PublicKey.findProgramAddressSync(
     // b"hack", protocol.key().as_ref(), amount.to_le_bytes().as_ref()
@@ -74,9 +76,8 @@ describe("oracle", () => {
   });
 
   it("oracle update", async () => {
-    const value = new BN(1);
     await program.methods
-      .oracleUpdate(value)
+      .oracleUpdate(price1)
       .accounts({
         oracle,
         operator: operator1.publicKey,
@@ -87,7 +88,7 @@ describe("oracle", () => {
       .then(async () => {
         const pda = await program.account.oracle.fetch(oracle);
         console.log(pda);
-        assert.equal(pda.operators[0].value.toNumber(), 1);
+        assert.equal(pda.operators[0].value.toNumber(), price1.toNumber());
       });
   });
 
@@ -111,6 +112,23 @@ describe("oracle", () => {
           pda.operators[1].address.toString()
         );
         console.log(pda);
+      });
+  });
+
+  it("oracle update", async () => {
+    await program.methods
+      .oracleUpdate(price2)
+      .accounts({
+        oracle,
+        operator: operator2.publicKey,
+      })
+      .signers([operator2])
+      .rpc()
+      .then(confirmTx)
+      .then(async () => {
+        const pda = await program.account.oracle.fetch(oracle);
+        console.log(pda);
+        assert.equal(pda.value, 15);
       });
   });
 

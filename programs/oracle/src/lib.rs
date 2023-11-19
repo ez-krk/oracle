@@ -10,7 +10,7 @@ use contexts::*;
 declare_id!("WBAVDQ9bRtxDym7G9HvDMSfoYh5i9YR6aiPdHzmSPoa");
 
 #[program]
-pub mod wba_oracle {
+pub mod oracle {
     use super::*;
 
     pub fn oracle_create(ctx: Context<OracleCreate>, name: String) -> Result<()> {

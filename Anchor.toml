@@ -2,7 +2,7 @@
 seeds = false
 skip-lint = false
 [programs.localnet]
-oracle = "CsBfzWBHQ6jABG8qfrP6rJZhVr1E9mzaop3PzcAo9kNV"
+oracle = "WBAVDQ9bRtxDym7G9HvDMSfoYh5i9YR6aiPdHzmSPoa"
 
 [registry]
 url = "https://api.apr.dev"

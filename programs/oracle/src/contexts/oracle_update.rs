@@ -45,7 +45,7 @@ impl<'info> OracleUpdate<'info> {
         let iter = oracle.operators.iter();
 
         for val in iter {
-            sum += val.value;
+            sum += &val.value;
             count += 1
         }
 
