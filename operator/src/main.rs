@@ -1,212 +1,117 @@
-use borsh::{BorshDeserialize, BorshSerialize};
-use solana_client::rpc_client::RpcClient;
-use solana_program::{
-    instruction::AccountMeta, instruction::Instruction, message::Message, pubkey::Pubkey,
-    system_program::ID,
-};
-use solana_sdk::{
-    commitment_config::CommitmentConfig, signature::Signature, signer::Signer,
-    transaction::Transaction,
-};
-use std::{env, str::FromStr};
+use std::str::FromStr;
 
+use anyhow::anyhow;
+use num_format::{Locale, ToFormattedString};
+use serenity::async_trait;
+use serenity::model::channel::Message;
+use serenity::model::gateway::Ready;
+use serenity::model::prelude::Activity;
+use serenity::prelude::*;
+use shuttle_secrets::SecretStore;
+use solana_client::rpc_client::RpcClient;
+use solana_program::pubkey::Pubkey;
+use std::env;
+use tokio::time;
+use tracing::{error, info};
+struct Bot;
+
+mod client;
+mod constants;
+mod contexts;
 mod helpers;
 
-const COMMITMENT: CommitmentConfig = CommitmentConfig::finalized();
+use crate::constants::*;
+use crate::contexts::*;
 
-const URL: &str = "https://api.devnet.solana.com";
+#[async_trait]
+impl EventHandler for Bot {
+    async fn ready(&self, ctx: Context, ready: Ready) {
+        let mut interval = time::interval(std::time::Duration::from_secs(60));
 
-const PROGRAM_ID: &str = "WBAVDQ9bRtxDym7G9HvDMSfoYh5i9YR6aiPdHzmSPoa";
+        let client = reqwest::Client::new();
 
-pub fn oracle_create(
-    operator: &str,
-    name: String,
-    commitment_config: CommitmentConfig,
-    wallet_signer: &dyn Signer,
-    rpc_client: &RpcClient,
-) -> Result<Signature, Box<dyn std::error::Error>> {
-    #[derive(BorshDeserialize, BorshSerialize, Debug)]
-    pub struct OracleCreate {
-        pub name: String,
+        info!("{} is connected!", ready.user.name);
+
+        let gecko_base = "https://api.coingecko.com/api/v3";
+
+        // change this list
+        let crypto = "solana";
+        let fiat = "usd";
+
+        let gecko_price = format!(
+            "{}/simple/price?ids={}&vs_currencies={}",
+            gecko_base, crypto, fiat
+        );
+
+        tokio::spawn(async move {
+            loop {
+                interval.tick().await;
+                let price = fetch(&client, &gecko_price, crypto, fiat).await;
+                println!("{}", price);
+                ctx.set_activity(Activity::watching(format!("$ {}", &price)))
+                    .await;
+                let rpc_client = RpcClient::new(RPC_ENDPOINT);
+                let wallet_signer = helpers::keypair();
+                let owner: Pubkey =
+                    Pubkey::from_str(env::var("KEYPAIR").unwrap().as_str()).unwrap();
+                let value = price.as_str().parse::<u64>().unwrap();
+                let signature =
+                    oracle_update(value, owner, COMMITMENT, &wallet_signer, &rpc_client).unwrap();
+                println!(
+                    "Success! Check out your TX here:
+              https://explorer.solana.com/tx/${signature}?cluster=devnet"
+                )
+            }
+        });
     }
-    let (oracle, oracle_bump) = Pubkey::find_program_address(
-        &[b"oracle", wallet_signer.pubkey().as_ref()],
-        &Pubkey::from_str(&PROGRAM_ID).unwrap(),
-    );
-    let operator = helpers::parse_pubkey(operator.as_bytes());
-
-    let data = OracleCreate { name };
-
-    let instruction = Instruction::new_with_borsh(
-        Pubkey::from_str(&PROGRAM_ID).unwrap(),
-        &data,
-        vec![
-            AccountMeta::new(oracle, false),
-            AccountMeta::new_readonly(Pubkey::from(operator), false),
-            AccountMeta::new_readonly(Pubkey::from(ID), false),
-        ],
-    );
-    submit_transaction(rpc_client, wallet_signer, instruction, commitment_config)
 }
 
-pub fn oracle_update(
-    value: u64,
-    owner: Pubkey,
-    commitment_config: CommitmentConfig,
-    wallet_signer: &dyn Signer,
-    rpc_client: &RpcClient,
-) -> Result<Signature, Box<dyn std::error::Error>> {
-    #[derive(BorshDeserialize, BorshSerialize, Debug)]
-    pub struct OracleUpdate {
-        pub value: u64,
-    }
-    let (oracle, oracle_bump) = Pubkey::find_program_address(
-        &[b"oracle", owner.as_ref()],
-        &Pubkey::from_str(&PROGRAM_ID).unwrap(),
-    );
+#[shuttle_runtime::main]
+async fn serenity(
+    #[shuttle_secrets::Secrets] secret_store: SecretStore,
+) -> shuttle_serenity::ShuttleSerenity {
+    let token = if let Some(token) = secret_store.get("DISCORD_TOKEN") {
+        token
+    } else {
+        return Err(anyhow!("'DISCORD_TOKEN' was not found").into());
+    };
 
-    let data = OracleUpdate { value };
+    let keypair = if let Some(keypair) = secret_store.get("KEYPAIR") {
+        std::env::set_var("KEYPAIR", &keypair);
+        keypair
+    } else {
+        return Err(anyhow!("'KEYPAIR' not found").into());
+    };
 
-    let instruction = Instruction::new_with_borsh(
-        Pubkey::from_str(&PROGRAM_ID).unwrap(),
-        &data,
-        vec![AccountMeta::new(oracle, false)],
-    );
-    submit_transaction(rpc_client, wallet_signer, instruction, commitment_config)
+    let owner = if let Some(owner) = secret_store.get("OWNER") {
+        std::env::set_var("OWNER", &owner);
+        owner
+    } else {
+        return Err(anyhow!("'OWNER' not found").into());
+    };
+
+    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+
+    let client = Client::builder(&token, intents)
+        .event_handler(Bot)
+        .await
+        .expect("Err creating client");
+
+    Ok(client.into())
 }
 
-pub fn oracle_delete(
-    commitment_config: CommitmentConfig,
-    wallet_signer: &dyn Signer,
-    rpc_client: &RpcClient,
-) -> Result<Signature, Box<dyn std::error::Error>> {
-    #[derive(BorshDeserialize, BorshSerialize, Debug)]
-    pub struct OracleDelete {}
-    let (oracle, oracle_bump) = Pubkey::find_program_address(
-        &[b"oracle", wallet_signer.pubkey().as_ref()],
-        &Pubkey::from_str(&PROGRAM_ID).unwrap(),
-    );
-
-    let data = OracleDelete {};
-
-    let instruction = Instruction::new_with_borsh(
-        Pubkey::from_str(&PROGRAM_ID).unwrap(),
-        &{},
-        vec![AccountMeta::new(oracle, false)],
-    );
-    submit_transaction(rpc_client, wallet_signer, instruction, commitment_config)
-}
-
-pub fn operator_add(
-    operator: &str,
-    commitment_config: CommitmentConfig,
-    wallet_signer: &dyn Signer,
-    rpc_client: &RpcClient,
-) -> Result<Signature, Box<dyn std::error::Error>> {
-    #[derive(BorshDeserialize, BorshSerialize, Debug)]
-    pub struct OperatorAdd {}
-    let (oracle, oracle_bump) = Pubkey::find_program_address(
-        &[b"oracle", wallet_signer.pubkey().as_ref()],
-        &Pubkey::from_str(&PROGRAM_ID).unwrap(),
-    );
-    let operator = helpers::parse_pubkey(operator.as_bytes());
-
-    let data = OperatorAdd {};
-
-    let instruction = Instruction::new_with_borsh(
-        Pubkey::from_str(&PROGRAM_ID).unwrap(),
-        &{},
-        vec![
-            AccountMeta::new(oracle, false),
-            AccountMeta::new_readonly(Pubkey::from(operator), false),
-            AccountMeta::new_readonly(Pubkey::from(ID), false),
-        ],
-    );
-    submit_transaction(rpc_client, wallet_signer, instruction, commitment_config)
-}
-
-pub fn operator_remove(
-    operator: &str,
-    commitment_config: CommitmentConfig,
-    wallet_signer: &dyn Signer,
-    rpc_client: &RpcClient,
-) -> Result<Signature, Box<dyn std::error::Error>> {
-    #[derive(BorshDeserialize, BorshSerialize, Debug)]
-    pub struct OperatorRemove {}
-    let (oracle, oracle_bump) = Pubkey::find_program_address(
-        &[b"oracle", wallet_signer.pubkey().as_ref()],
-        &Pubkey::from_str(&PROGRAM_ID).unwrap(),
-    );
-    let operator = helpers::parse_pubkey(operator.as_bytes());
-
-    let data = OperatorRemove {};
-
-    let instruction = Instruction::new_with_borsh(
-        Pubkey::from_str(&PROGRAM_ID).unwrap(),
-        &{},
-        vec![
-            AccountMeta::new(oracle, false),
-            AccountMeta::new_readonly(Pubkey::from(operator), false),
-            AccountMeta::new_readonly(Pubkey::from(ID), false),
-        ],
-    );
-    submit_transaction(rpc_client, wallet_signer, instruction, commitment_config)
-}
-
-pub fn submit_transaction(
-    rpc_client: &RpcClient,
-    wallet_signer: &dyn Signer,
-    instruction: Instruction,
-    commitment_config: CommitmentConfig,
-) -> Result<Signature, Box<dyn std::error::Error>> {
-    let mut transaction =
-        Transaction::new_unsigned(Message::new(&[instruction], Some(&wallet_signer.pubkey())));
-    let (recent_blockhash, _fee_calculator) = rpc_client
-        .get_recent_blockhash()
-        .map_err(|err| format!("error: unable to get recent blockhash: {}", err))?;
-    transaction
-        .try_sign(&vec![wallet_signer], recent_blockhash)
-        .map_err(|err| format!("error: failed to sign transaction: {}", err))?;
-    let signature = rpc_client
-        .send_and_confirm_transaction_with_spinner_and_commitment(&transaction, commitment_config)
-        .map_err(|err| format!("error: send transaction: {}", err))?;
-    Ok(signature)
-}
-
-fn main() {
-    let args: Vec<String> = env::args().collect();
-
-    let rpc_client = RpcClient::new(URL);
-
-    let wallet_signer = helpers::keypair(args[2].as_str());
-
-    match args[1].as_str() {
-        "oracle_create" => {
-            let operator = args[3].as_str();
-
-            let name = args[4].as_str().to_string();
-            let sig =
-                oracle_create(operator, name, COMMITMENT, &wallet_signer, &rpc_client).unwrap();
-        }
-        "oracle_update" => {
-            let owner: Pubkey = Pubkey::from(helpers::parse_pubkey(args[3].as_str().as_bytes()));
-
-            let value = args[4].as_str().parse::<u64>().unwrap();
-            let sig = oracle_update(value, owner, COMMITMENT, &wallet_signer, &rpc_client).unwrap();
-        }
-        "oracle_delete" => {
-            let sig = oracle_delete(COMMITMENT, &wallet_signer, &rpc_client).unwrap();
-        }
-        "operator_add" => {
-            let operator = args[3].as_str();
-
-            let sig = operator_add(operator, COMMITMENT, &wallet_signer, &rpc_client).unwrap();
-        }
-        "operator_remove" => {
-            let operator = args[3].as_str();
-
-            let sig = operator_remove(operator, COMMITMENT, &wallet_signer, &rpc_client).unwrap();
-        }
-        _ => println!("something went wrong !"),
-    }
+async fn fetch(client: &reqwest::Client, url: &String, crypto: &str, fiat: &str) -> String {
+    let body = client
+        .get(url)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let data = body.get(crypto).unwrap();
+    data[format!("{}", fiat)]
+        .as_u64()
+        .unwrap()
+        .to_formatted_string(&Locale::en)
 }

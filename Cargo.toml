@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "programs/*",
-    "operator"
+    "operator",
+    "oracle-cli"
 ]
 
 [profile.release]

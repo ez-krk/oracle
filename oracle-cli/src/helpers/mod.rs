@@ -1,17 +1,18 @@
 use solana_sdk::signature::Keypair;
-use std::env;
+use std::fs;
 
-pub fn keypair() -> Keypair {
-    let bytes = env::var("KEYPAIR").unwrap();
-    Keypair::from_bytes(string_u8(bytes.as_str()).as_slice()).unwrap()
+pub fn keypair(file: &str) -> Keypair {
+    Keypair::from_bytes(string_u8(file).as_slice()).unwrap()
 }
 
 pub fn parse_pubkey(slice: &[u8]) -> [u8; 32] {
     slice.try_into().expect("incorrect slice length")
 }
 
-pub fn string_u8(string: &str) -> Vec<u8> {
-    let trim = string
+pub fn string_u8(path: &str) -> Vec<u8> {
+    let file = fs::read_to_string(path).expect("unable to read file");
+
+    let trim = file
         .replace("[", "")
         .replace("]", "")
         .replace(" ", "")
